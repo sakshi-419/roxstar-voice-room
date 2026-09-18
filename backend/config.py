@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # ── LLM ───────────────────────────────────────────────────────────────────
     llm_provider: str = "google"            # google | openai
-    llm_model: str = "gemini-2.0-flash"
+    llm_model: str = "gemini-3.6-flash"
     google_api_key: str = ""
     openai_api_key: str = ""
 
@@ -93,6 +93,29 @@ class Settings(BaseSettings):
         if v not in allowed:
             raise ValueError(f"tts_provider must be one of {allowed}, got {v!r}")
         return v
+
+    def validate_voice_pipeline(self) -> None:
+        """Validate that all credentials required for the active voice pipeline are set.
+
+        This is invoked when the AI agent voice pipeline is initialised (Phase 2/3),
+        preventing missing-key crashes during runtime while ensuring the token server
+        and health checks can start without voice provider keys.
+        """
+        missing: list[str] = []
+        if self.stt_provider == "deepgram" and not self.deepgram_api_key:
+            missing.append("DEEPGRAM_API_KEY")
+        if self.llm_provider == "google" and not self.google_api_key:
+            missing.append("GOOGLE_API_KEY")
+        elif self.llm_provider == "openai" and not self.openai_api_key:
+            missing.append("OPENAI_API_KEY")
+        if self.tts_provider == "elevenlabs" and not self.elevenlabs_api_key:
+            missing.append("ELEVENLABS_API_KEY")
+
+        if missing:
+            raise ValueError(
+                f"Missing required voice pipeline credentials in environment: {', '.join(missing)}. "
+                "Please add them to backend/.env."
+            )
 
 
 # Module-level singleton — import this everywhere instead of creating new instances.
