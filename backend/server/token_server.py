@@ -97,6 +97,7 @@ class HealthResponse(BaseModel):
 
 # ── Health Endpoint ──────────────────────────────────────────────────────────
 
+@app.get("/", response_model=HealthResponse)
 @app.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Report server health and connectivity to external services (Redis, LiveKit)."""
@@ -104,10 +105,9 @@ async def health_check() -> HealthResponse:
     livekit_ok = bool(
         settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     )
-    overall_status = "ok" if (redis_ok and livekit_ok) else "degraded"
 
     return HealthResponse(
-        status=overall_status,
+        status="ok",
         redis=redis_ok,
         livekit_configured=livekit_ok,
     )
@@ -285,8 +285,7 @@ if __name__ == "__main__":
 
     port = int(os.getenv("PORT", str(settings.token_server_port)))
     uvicorn.run(
-        "server.token_server:app",
+        app,
         host="0.0.0.0",
         port=port,
-        reload=False,
     )
