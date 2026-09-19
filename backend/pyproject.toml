@@ -9,20 +9,18 @@ dependencies = [
     "livekit-plugins-deepgram>=1.0",
     "livekit-plugins-elevenlabs>=1.0",
     "livekit-plugins-google>=1.0",
-
     # Async Redis client (redis>=8 ships asyncio built-in; no extra needed)
     "redis>=8.0",
-
     # API server
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-
     # Config / env
     "pydantic-settings>=2.0",
     "python-dotenv>=1.0",
-
     # Structured logging
     "structlog>=24.0",
+    "livekit-plugins-openai>=1.0",
+    "livekit-plugins-groq>=1.0",
 ]
 
 [project.optional-dependencies]

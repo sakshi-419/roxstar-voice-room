@@ -84,7 +84,7 @@ def test_secret_sanitizer():
     """Verify structured logger sanitizer masks credentials."""
     event = {
         "event": "connect",
-        "url": "rediss://default:supersecretpassword123@delicate-dolphin-283071.upstash.io:6379",
+        "url": "rediss://default:mockpassword@mock-redis.upstash.io:6379",
         "api_key": "sk_3774f90f388db3eb7f2ac07741ae797e008d8b10d1375538",
     }
     sanitized = sanitize_sensitive_data(None, "info", event)
@@ -103,13 +103,13 @@ def test_provider_factories():
     assert llm_p is not None
     assert tts_p is not None
     
-    # Verify Gemini model configuration and timeout
+    # Verify model configuration and timeout for active provider (Groq or Google)
     if hasattr(llm_p, "_llm"):
-        assert llm_p._llm[0].model == "gemini-3.6-flash"
-        assert llm_p._llm[1].model == "gemini-3.5-flash"
         assert getattr(llm_p, "_attempt_timeout", 0.0) >= 10.0
+        active_model = llm_p._llm[0].model
+        assert active_model in ("gemini-3.6-flash", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen/qwen3.8-27b", "allam-2-7b", "openai/gpt-oss-20b", "openai/gpt-oss-120b", "groq/compound-mini", "groq/compound")
     elif hasattr(llm_p, "model"):
-        assert llm_p.model == "gemini-3.6-flash"
+        assert llm_p.model in ("gemini-3.6-flash", "llama-3.3-70b-versatile", "llama-3.1-8b-instant", "qwen/qwen3.8-27b", "allam-2-7b", "openai/gpt-oss-20b", "openai/gpt-oss-120b", "groq/compound-mini", "groq/compound")
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,8 @@ hard-coded here.
 
 from __future__ import annotations
 
+import os
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,7 +23,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=os.path.join(os.path.dirname(__file__), ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -42,9 +44,11 @@ class Settings(BaseSettings):
     deepgram_api_key: str = ""
 
     # ── LLM ───────────────────────────────────────────────────────────────────
-    llm_provider: str = "google"            # google | openai
-    llm_model: str = "gemini-3.6-flash"
+    agent_name: str = ""                   # optional binding for dedicated worker
+    llm_provider: str = "groq"              # groq | google | openai
+    llm_model: str = ""                     # optional override; defaults per provider
     google_api_key: str = ""
+    groq_api_key: str = ""
     openai_api_key: str = ""
 
     # ── TTS ───────────────────────────────────────────────────────────────────
@@ -81,35 +85,35 @@ class Settings(BaseSettings):
     @field_validator("llm_provider")
     @classmethod
     def validate_llm_provider(cls, v: str) -> str:
-        allowed = {"google", "openai"}
-        if v not in allowed:
+        allowed = {"google", "openai", "groq"}
+        lower = v.lower()
+        if lower not in allowed:
             raise ValueError(f"llm_provider must be one of {allowed}, got {v!r}")
-        return v
+        return lower
 
     @field_validator("tts_provider")
     @classmethod
     def validate_tts_provider(cls, v: str) -> str:
-        allowed = {"elevenlabs", "google_tts"}
+        allowed = {"elevenlabs", "google_tts", "deepgram"}
         if v not in allowed:
             raise ValueError(f"tts_provider must be one of {allowed}, got {v!r}")
         return v
 
     def validate_voice_pipeline(self) -> None:
-        """Validate that all credentials required for the active voice pipeline are set.
-
-        This is invoked when the AI agent voice pipeline is initialised (Phase 2/3),
-        preventing missing-key crashes during runtime while ensuring the token server
-        and health checks can start without voice provider keys.
-        """
+        """Validate that all credentials required for the active voice pipeline are set."""
         missing: list[str] = []
         if self.stt_provider == "deepgram" and not self.deepgram_api_key:
             missing.append("DEEPGRAM_API_KEY")
-        if self.llm_provider == "google" and not self.google_api_key:
+        if self.llm_provider == "groq" and not self.groq_api_key:
+            missing.append("GROQ_API_KEY")
+        elif self.llm_provider == "google" and not self.google_api_key:
             missing.append("GOOGLE_API_KEY")
         elif self.llm_provider == "openai" and not self.openai_api_key:
             missing.append("OPENAI_API_KEY")
         if self.tts_provider == "elevenlabs" and not self.elevenlabs_api_key:
             missing.append("ELEVENLABS_API_KEY")
+        elif self.tts_provider == "deepgram" and not self.deepgram_api_key:
+            missing.append("DEEPGRAM_API_KEY")
 
         if missing:
             raise ValueError(
@@ -118,6 +122,5 @@ class Settings(BaseSettings):
             )
 
 
-# Module-level singleton — import this everywhere instead of creating new instances.
-# Example:  from config import settings
+# Module-level singleton
 settings = Settings()

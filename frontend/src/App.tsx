@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   LiveKitRoom,
   RoomAudioRenderer,
   useParticipants,
   useLocalParticipant,
   useRoomContext,
+  useChat,
 } from '@livekit/components-react'
 import type { Participant } from 'livekit-client'
+
+const TOKEN_SERVER_URL = (import.meta.env.VITE_TOKEN_SERVER_URL || '').replace(/\/$/, '')
 
 interface HealthState {
   backend: boolean
@@ -33,7 +36,7 @@ export default function App() {
   // Poll backend health check
   const checkHealth = async () => {
     try {
-      const res = await fetch('/health')
+      const res = await fetch(`${TOKEN_SERVER_URL}/health`)
       if (res.ok) {
         const data = await res.json()
         setHealth({
@@ -67,7 +70,7 @@ export default function App() {
 
     try {
       // 1. Fetch token from backend
-      const res = await fetch('/token', {
+      const res = await fetch(`${TOKEN_SERVER_URL}/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -88,7 +91,7 @@ export default function App() {
 
       // 2. If autoDispatch requested, summon Dost & Sathi
       if (autoDispatch) {
-        fetch('/dispatch', {
+        fetch(`${TOKEN_SERVER_URL}/dispatch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ room_name: roomName.trim() }),
@@ -255,8 +258,40 @@ function RoomView({
   const participants = useParticipants()
   const { isMicrophoneEnabled, localParticipant } = useLocalParticipant()
   const room = useRoomContext()
+  const { chatMessages, send, isSending } = useChat()
   const [dispatchStatus, setDispatchStatus] = useState<string | null>(null)
   const [isDispatching, setIsDispatching] = useState(false)
+  const [showChat, setShowChat] = useState(true)
+  const [chatInput, setChatInput] = useState('')
+  const chatBottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [chatMessages])
+
+  const handleSendChat = async (e?: React.SyntheticEvent, customMsg?: string) => {
+    if (e) e.preventDefault()
+    const textToSend = (customMsg || chatInput).trim()
+    if (!textToSend || isSending) return
+    if (!customMsg) setChatInput('')
+    try {
+      await send(textToSend)
+    } catch (err) {
+      console.error('Failed to send text chat:', err)
+    }
+  }
+
+  const hasDost = participants.some((p) => {
+    const id = (p.identity || "").toLowerCase()
+    const nm = (p.name || "").toLowerCase()
+    return id.includes("dost") || nm.includes("dost")
+  })
+  const hasSathi = participants.some((p) => {
+    const id = (p.identity || "").toLowerCase()
+    const nm = (p.name || "").toLowerCase()
+    return id.includes("sathi") || nm.includes("sathi")
+  })
+  const allAgentsActive = hasDost && hasSathi
 
   const toggleMic = async () => {
     try {
@@ -267,10 +302,11 @@ function RoomView({
   }
 
   const handleManualDispatch = async () => {
+    if (isDispatching || allAgentsActive) return;
     setIsDispatching(true)
     setDispatchStatus('Dispatching agents...')
     try {
-      const res = await fetch('/dispatch', {
+      const res = await fetch(`${TOKEN_SERVER_URL}/dispatch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ room_name: roomName }),
@@ -321,10 +357,18 @@ function RoomView({
             type="button"
             className="btn-action dispatch"
             onClick={handleManualDispatch}
-            disabled={isDispatching}
+            disabled={isDispatching || allAgentsActive}
             id="dispatch-btn"
           >
-            🤖 {dispatchStatus || 'Summon AI Agents'}
+            🤖 {allAgentsActive ? 'AI Agents Active' : (dispatchStatus || 'Summon AI Agents')}
+          </button>
+          <button
+            type="button"
+            className={`btn-action ${showChat ? 'mic-active' : ''}`}
+            onClick={() => setShowChat(!showChat)}
+            id="chat-toggle-btn"
+          >
+            💬 Chat {chatMessages.length > 0 ? `(${chatMessages.length})` : ''}
           </button>
 
           <button
@@ -359,9 +403,91 @@ function RoomView({
           ))}
         </div>
 
-        <div className="info-box" style={{ marginTop: 'auto' }}>
-          💡 <strong>Multi-Human Audio Active:</strong> When someone speaks, their card will highlight in emerald green. Speak into your microphone to verify bidirectional audio.
+        <div className="info-box">
+          🎙️ <strong>Two AI Co-Hosts Active:</strong> Say <strong>"Dost, ..."</strong> to talk to <strong>AI Dost (Male Voice)</strong> or <strong>"Sathi, ..."</strong> to talk to <strong>AI Sathi (Female Voice)</strong>. Follow-ups (e.g. <em>"thoda simple batao"</em>) will automatically continue with the current speaker!
         </div>
+
+        {/* Live Room Text Chat (Requirement 2.3 & Scenarios 1-5) */}
+        {showChat && (
+          <div className="chat-container">
+            <div className="chat-header">
+              <span className="chat-title">💬 Live Room Text Chat</span>
+              <span className="chat-subtitle">Ask questions via text or voice — AI Dost &amp; Sathi will respond!</span>
+            </div>
+
+            <div className="quick-prompts">
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginRight: '6px' }}>Try asking:</span>
+              <button type="button" className="prompt-chip" onClick={() => handleSendChat(undefined, 'Dost, AI kya hota hai?')}>
+                "Dost, AI kya hota hai?"
+              </button>
+              <button type="button" className="prompt-chip" onClick={() => handleSendChat(undefined, 'Sathi, rain ka concept samjhao.')}>
+                "Sathi, rain ka concept samjhao."
+              </button>
+              <button type="button" className="prompt-chip" onClick={() => handleSendChat(undefined, 'Thoda aur simple batao.')}>
+                "Thoda aur simple batao."
+              </button>
+              <button type="button" className="prompt-chip" onClick={() => handleSendChat(undefined, 'Can you explain cloud computing?')}>
+                "Can you explain cloud computing?"
+              </button>
+            </div>
+
+            <div className="chat-messages">
+              {chatMessages.length === 0 ? (
+                <div className="chat-empty">
+                  No messages yet. Speak into your mic or type a question below!
+                </div>
+              ) : (
+                chatMessages.map((msg) => {
+                  const sender = msg.from?.name || msg.from?.identity || 'User'
+                  const isDost = sender.toLowerCase().includes('dost')
+                  const isSathi = sender.toLowerCase().includes('sathi')
+                  const isSelf = msg.from?.identity === localParticipant.identity
+
+                  let bubbleClass = 'chat-bubble user-bubble'
+                  let tagLabel = sender
+                  if (isSelf) {
+                    bubbleClass = 'chat-bubble self-bubble'
+                    tagLabel = 'You'
+                  } else if (isDost) {
+                    bubbleClass = 'chat-bubble dost-bubble'
+                    tagLabel = 'AI Dost (Male)'
+                  } else if (isSathi) {
+                    bubbleClass = 'chat-bubble sathi-bubble'
+                    tagLabel = 'AI Sathi (Female)'
+                  }
+
+                  return (
+                    <div key={msg.id || msg.timestamp} className={`chat-message-row ${isSelf ? 'row-self' : 'row-other'}`}>
+                      <div className="chat-meta">
+                        <span className="chat-sender">{tagLabel}</span>
+                        <span className="chat-time">
+                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <div className={bubbleClass}>{msg.message}</div>
+                    </div>
+                  )
+                })
+              )}
+              <div ref={chatBottomRef} />
+            </div>
+
+            <form className="chat-input-form" onSubmit={handleSendChat}>
+              <input
+                type="text"
+                className="chat-input"
+                placeholder="Type your message in Hindi, Hinglish, or English..."
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                disabled={isSending}
+                id="room-chat-input"
+              />
+              <button type="submit" className="chat-send-btn" disabled={!chatInput.trim() || isSending} id="room-chat-send-btn">
+                {isSending ? '...' : 'Send ➔'}
+              </button>
+            </form>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -390,19 +516,22 @@ function ParticipantTile({
   let badgeLabel = 'Human'
   let badgeClass = 'participant-badge badge-human'
 
+  let subtitle = isLocal ? 'You (Microphone)' : ('ID: ' + identity) 
   if (isLocal) {
     badgeLabel = 'You'
     badgeClass = 'participant-badge badge-you'
   } else if (isDost) {
     avatarClass = 'avatar bot-dost'
     initial = 'D'
-    badgeLabel = 'AI Dost'
+    badgeLabel = 'AI Dost (Male Voice)'
     badgeClass = 'participant-badge badge-ai'
+    subtitle = 'Male Co-Host · Say "Dost..." to speak'
   } else if (isSathi) {
     avatarClass = 'avatar bot-sathi'
     initial = 'S'
-    badgeLabel = 'AI Sathi'
+    badgeLabel = 'AI Sathi (Female Voice)'
     badgeClass = 'participant-badge badge-ai'
+    subtitle = 'Female Co-Host · Say "Sathi..." to speak'
   } else if (isAgent) {
     avatarClass = 'avatar bot-dost'
     initial = 'A'
@@ -429,8 +558,8 @@ function ParticipantTile({
           <span className={badgeClass}>{badgeLabel}</span>
         </div>
 
-        <div className="participant-identity" title={identity}>
-          ID: {identity}
+        <div className="participant-identity" title={identity} style={{ color: (isDost || isSathi) ? 'var(--accent-cyan, #38bdf8)' : undefined, fontWeight: (isDost || isSathi) ? 500 : undefined }}>
+          {subtitle}
         </div>
 
         <div className="participant-audio-indicator">

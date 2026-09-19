@@ -2,11 +2,15 @@
 backend/agents/base_bot.py
 --------------------------
 BaseBotAgent provides core room context integration, turn memory recording,
-and latency tracking for conversational voice bots in Roxstar Voice Room.
+exactly-once voice ingestion, distributed routing, and speaking locks for
+conversational voice bots in Roxstar Voice Room.
 """
 
 from __future__ import annotations
 
+import asyncio
+import re
+import time
 from typing import Any
 
 from core.latency_tracker import LatencyTracker
@@ -14,15 +18,13 @@ from core.logger import get_logger
 from core.room_state import RoomState, TurnRecord
 from livekit.agents import Agent, llm
 
-import re
-
 logger = get_logger("roxstar.agents.base")
 
 
 def extract_speaker_facts(text: str) -> dict[str, Any]:
     """Extract personal facts (name, city, interest) from user speech using lightweight regex rules."""
     facts: dict[str, Any] = {}
-    
+
     # 1. Name extraction
     name_match = (
         re.search(r"\bmera\s+naam\s+([a-zA-Z]+)", text, re.IGNORECASE)
@@ -82,7 +84,7 @@ class BaseBotAgent(Agent):
     async def on_enter(self) -> None:
         """Called when the agent enters the room session."""
         logger.info("bot_entered_session", bot=self.bot_name, room=self.state.room_name)
-        
+
         # Hydrate history from Redis if available
         await self.state.load_history_from_redis()
 
@@ -121,31 +123,97 @@ class BaseBotAgent(Agent):
             user_text = new_message.content.strip()
 
         if not user_text:
-            logger.debug("empty_user_transcript_received", bot=self.bot_name)
             return
 
-        # Extract speaker metadata if attached to message
-        speaker_id = getattr(new_message, "participant_identity", None) or "user"
-        speaker_name = getattr(new_message, "participant_name", None) or "User"
+        logger.info("VOICE_TRANSCRIPT", text=user_text[:100].encode("ascii","replace").decode("ascii"), room=self.state.room_name)
 
-        # Register speaker if name is available
-        await self.state.register_speaker(speaker_id, speaker_name)
+        speaker_id = getattr(new_message, "speaker_id", None) or "human"
+        speaker_name = getattr(new_message, "speaker_name", None) or speaker_id
 
-        # Extract personal facts if user shared any
-        extracted_facts = extract_speaker_facts(user_text)
-        if extracted_facts:
-            await self.state.update_speaker_facts(speaker_id, extracted_facts)
+        # PART 7: AI-to-AI loop prevention
+        # Block AI-generated audio from re-entering the STT/routing pipeline.
+        # Only genuine human participants may trigger a bot turn.
+        sid_lower = speaker_id.lower()
+        sname_lower = (speaker_name or "").lower()
+        if ("dost" in sid_lower or "sathi" in sid_lower or
+                "dost" in sname_lower or "sathi" in sname_lower or
+                "roxstar" in sid_lower):
+            logger.debug("ai_audio_loop_blocked", speaker_id=speaker_id, bot=self.bot_name)
+            from livekit.agents.llm import StopResponse
+            raise StopResponse()
 
-        # 2. Record human turn into RoomState
-        turn = TurnRecord(
-            speaker_id=speaker_id,
-            speaker_name=speaker_name,
-            text=user_text,
-        )
-        await self.state.add_turn(turn)
+        # 2. Exactly-Once Voice Ingestion (robust turn_id with text snippet & 2s bucket)
+        clean_snippet = re.sub(r"[^\w]", "", user_text.lower())[:16]
+        time_bucket = int(time.time() / 2.0) * 2
+        turn_id = f"{speaker_id}:{clean_snippet}:{time_bucket}"
 
-        # 3. Dynamically inject updated room context & speaker profile into system instructions
-        room_context = await self.state.build_context_string(n=10)
+        is_winner = await self.state.claim_voice_ingest(turn_id)
+
+        if is_winner:
+            # Compute route IMMEDIATELY so other bot is unblocked in milliseconds
+            from core.bot_router import BotRouter
+            t_route_start = time.time()
+            target_bot = await BotRouter.select_bot(self.state, user_text)
+            routing_ms = (time.time() - t_route_start) * 1000.0
+
+            # Publish route immediately to Redis
+            await self.state.set_voice_route(turn_id, target_bot)
+            logger.info("BOT_ROUTED", selected_bot=target_bot, routing_ms=round(routing_ms, 2), room=self.state.room_name)
+
+            # Record speaker and turn history in room state
+            await self.state.register_speaker(speaker_id, speaker_name)
+            extracted_facts = extract_speaker_facts(user_text)
+            if extracted_facts:
+                await self.state.update_speaker_facts(speaker_id, extracted_facts)
+
+            turn = TurnRecord(
+                speaker_id=speaker_id,
+                speaker_name=speaker_name,
+                text=user_text,
+            )
+            await self.state.add_turn(turn)
+        else:
+            # Loser waits for winner's route decision (fast 0.6s max wait)
+            target_bot = await self.state.wait_for_voice_route(turn_id, timeout_seconds=0.6)
+            if not target_bot:
+                from core.bot_router import BotRouter
+                target_bot = await BotRouter.select_bot(self.state, user_text)
+
+        # 3. Routing Filter: Only the selected bot proceeds
+        if target_bot != self.bot_name:
+            logger.info(
+                "bot_turn_suppressed_by_router",
+                bot=self.bot_name,
+                target_bot=target_bot,
+                turn_id=turn_id,
+            )
+            from livekit.agents.llm import StopResponse
+            raise StopResponse()
+
+        # 4. Distributed Speaking Lock: Ensure exclusive speech generation
+        # First release any stale lock from a previous failed/timed-out turn
+        # so we never get permanently locked out if a previous response crashed.
+        await self.state.release_speaking_lock(self.bot_name)
+        lock_acquired = await self.state.acquire_speaking_lock(self.bot_name, ttl=20)
+        if not lock_acquired:
+            logger.warning(
+                "bot_turn_suppressed_speaking_lock_busy",
+                bot=self.bot_name,
+                turn_id=turn_id,
+            )
+            from livekit.agents.llm import StopResponse
+            raise StopResponse()
+        logger.info("TTS_START", bot=self.bot_name, room=self.state.room_name)
+
+        # 5. Cap dialogue context to keep TTFB ultra-fast and stay safely within token limits
+        try:
+            if hasattr(turn_ctx, "truncate") and len(getattr(turn_ctx, "items", [])) > 6:
+                turn_ctx.truncate(max_items=6)
+        except Exception:
+            pass
+
+        # 6. Dynamically inject updated room context & speaker profile into system instructions
+        room_context = await self.state.build_context_string(n=5)
         speaker_profile = await self.state.get_speaker_profile(speaker_id)
 
         try:
@@ -163,6 +231,5 @@ class BaseBotAgent(Agent):
             speaker_id=speaker_id,
             user_text=user_text[:80],
             context_turns_count=len(self.state._turns),
-            facts_extracted=bool(extracted_facts),
         )
-
+        logger.info("LLM_STARTED", bot=self.bot_name, room=self.state.room_name)
