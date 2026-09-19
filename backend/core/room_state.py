@@ -97,28 +97,130 @@ class RoomState:
         lines = [turn.to_dialogue_line() for turn in recent_turns]
         return "\n".join(lines)
 
+    # ── History Hydration ───────────────────────────────────────────────────
+
+    async def load_history_from_redis(self) -> int:
+        """Hydrate local turns and speaker profiles from Redis if local state is empty."""
+        try:
+            from core.redis_client import get_redis
+            redis = await get_redis()
+
+            # 1. Hydrate turn history if local list is empty
+            if not self._turns:
+                key = f"room:{self.room_name}:turns"
+                raw_items = await redis.lrange(key, 0, self._max_turns - 1)
+                if raw_items:
+                    loaded_turns: list[TurnRecord] = []
+                    # Items from LPUSH are newest first -> reverse for chronological order
+                    for item in reversed(raw_items):
+                        try:
+                            data = json.loads(item)
+                            loaded_turns.append(TurnRecord(**data))
+                        except Exception:
+                            continue
+                    self._turns = loaded_turns
+                    logger.info("turns_hydrated_from_redis", room=self.room_name, count=len(self._turns))
+
+            return len(self._turns)
+        except Exception as exc:
+            logger.debug("redis_history_hydration_skipped", room=self.room_name, error=str(exc))
+            return len(self._turns)
+
     # ── Speaker Memory ───────────────────────────────────────────────────────
 
     async def register_speaker(self, identity: str, name: str) -> None:
-        """Register or update a participant in the room."""
+        """Register or update a participant in local memory and Redis."""
+        now = time.time()
         if identity not in self._speakers:
             self._speakers[identity] = {
                 "identity": identity,
                 "name": name,
-                "first_seen": time.time(),
+                "first_seen": now,
                 "facts": {},
             }
         else:
             self._speakers[identity]["name"] = name
 
+        # Background Redis sync
+        try:
+            from core.redis_client import get_redis
+            redis = await get_redis()
+            key = f"room:{self.room_name}:speaker:{identity}"
+            current_facts = json.dumps(self._speakers[identity]["facts"])
+            mapping = {
+                "identity": identity,
+                "name": name,
+                "first_seen": str(self._speakers[identity]["first_seen"]),
+                "facts": current_facts,
+            }
+            await redis.hset(key, mapping=mapping)
+            await redis.expire(key, 86400)
+            logger.debug("speaker_registered_redis", room=self.room_name, identity=identity, name=name)
+        except Exception as exc:
+            logger.debug("redis_sync_speaker_skipped", room=self.room_name, error=str(exc))
+
     async def update_speaker_facts(self, identity: str, facts: dict[str, Any]) -> None:
-        """Store extracted attributes or facts for a speaker."""
-        if identity in self._speakers:
-            self._speakers[identity]["facts"].update(facts)
+        """Store extracted attributes or facts for a speaker in memory and Redis."""
+        if not facts:
+            return
+
+        if identity not in self._speakers:
+            await self.register_speaker(identity, identity)
+
+        self._speakers[identity]["facts"].update(facts)
+
+        logger.info(
+            "speaker_facts_updated",
+            room=self.room_name,
+            identity=identity,
+            facts=facts,
+        )
+
+        # Background Redis sync
+        try:
+            from core.redis_client import get_redis
+            redis = await get_redis()
+            key = f"room:{self.room_name}:speaker:{identity}"
+            facts_json = json.dumps(self._speakers[identity]["facts"])
+            await redis.hset(key, "facts", facts_json)
+            await redis.expire(key, 86400)
+        except Exception as exc:
+            logger.debug("redis_sync_facts_skipped", room=self.room_name, error=str(exc))
 
     async def get_speaker_profile(self, identity: str) -> str:
-        """Return a formatted profile of the speaker for the prompt."""
+        """Return a formatted profile of the speaker for prompt injection."""
         profile = self._speakers.get(identity)
+
+        # Try hydrating from Redis if missing locally
+        if not profile:
+            try:
+                from core.redis_client import get_redis
+                redis = await get_redis()
+                key = f"room:{self.room_name}:speaker:{identity}"
+                raw_hash = await redis.hgetall(key)
+                if raw_hash:
+                    # Redis returns bytes or strings depending on decode_responses
+                    h_data = {
+                        (k.decode("utf-8") if isinstance(k, bytes) else k): (v.decode("utf-8") if isinstance(v, bytes) else v)
+                        for k, v in raw_hash.items()
+                    }
+                    facts_dict = {}
+                    if "facts" in h_data and h_data["facts"]:
+                        try:
+                            facts_dict = json.loads(h_data["facts"])
+                        except Exception:
+                            facts_dict = {}
+
+                    profile = {
+                        "identity": h_data.get("identity", identity),
+                        "name": h_data.get("name", identity),
+                        "first_seen": float(h_data.get("first_seen", time.time())),
+                        "facts": facts_dict,
+                    }
+                    self._speakers[identity] = profile
+            except Exception as exc:
+                logger.debug("redis_get_speaker_skipped", room=self.room_name, error=str(exc))
+
         if not profile:
             return f"Speaker ID: {identity}"
 
@@ -141,3 +243,4 @@ class RoomState:
 
     async def get_human_count(self) -> int:
         return self._human_count
+
