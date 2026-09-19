@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # ── Validators ────────────────────────────────────────────────────────────
+    @field_validator("redis_url")
+    @classmethod
+    def clean_redis_url(cls, v: str) -> str:
+        if v:
+            return v.strip().strip('"').strip("'").strip()
+        return "redis://localhost:6379/0"
+
     @field_validator("log_level")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
