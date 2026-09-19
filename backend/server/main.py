@@ -92,9 +92,9 @@ logger = get_logger("roxstar.agent_server")
 AGENT_NAME = os.getenv("AGENT_NAME", "").strip()
 
 server = AgentServer(
-    ws_url=settings.livekit_url,
-    api_key=settings.livekit_api_key,
-    api_secret=settings.livekit_api_secret,
+    ws_url=settings.livekit_url or None,
+    api_key=settings.livekit_api_key or None,
+    api_secret=settings.livekit_api_secret or None,
 )
 
 

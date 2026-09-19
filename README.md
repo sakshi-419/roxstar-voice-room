@@ -271,14 +271,22 @@ Open `http://localhost:5173` in your browser. Join the default room `roxstar-lou
 
 ---
 
-### Step 3: Deploy LiveKit Agent Worker to Render / Railway
-> **Important:** Do NOT deploy the agent worker as a serverless function. It must run as a **persistent background worker**.
+### Step 3: Deploy LiveKit Agent Worker to LiveKit Cloud (100% Free ? No Card Required)
+Deploy the agent worker directly to LiveKit Cloud's native agent infrastructure:
 
-1. Create a new **Background Worker** on [Render](https://render.com).
-2. Set Root Directory to `backend`.
-3. Build Command: `pip install -U uv && uv sync --frozen`.
-4. Start Command: `uv run python -m server.main start`.
-5. Set Environment Variables:
+1. In the `backend/` directory, authenticate with LiveKit Cloud:
+   ```bash
+   lk cloud auth
+   ```
+2. Link your LiveKit Cloud project:
+   ```bash
+   lk project set-default "roxstar-ai-voice-room"
+   ```
+3. Create and register the agent:
+   ```bash
+   lk agent create
+   ```
+4. Set required environment variables/secrets in the LiveKit Cloud Dashboard (Project Settings -> Agent Secrets):
    - `LIVEKIT_URL`
    - `LIVEKIT_API_KEY`
    - `LIVEKIT_API_SECRET`
@@ -290,6 +298,10 @@ Open `http://localhost:5173` in your browser. Join the default room `roxstar-lou
    - `DOST_VOICE_ID`
    - `SATHI_VOICE_ID`
    - `REDIS_URL`
+5. Deploy the agent:
+   ```bash
+   lk agent deploy
+   ```
 
 Alternatively, deploy using the included [render.yaml](render.yaml) blueprint:
 ```bash

@@ -1,4 +1,4 @@
-﻿# Multi-stage production container for Roxstar AI Voice Room backend
+﻿# Multi-stage production container for LiveKit Cloud Agent
 FROM python:3.12-slim AS runtime
 
 WORKDIR /app
@@ -19,10 +19,7 @@ RUN uv sync --frozen --no-dev
 # Copy application source code
 COPY . .
 
-ENV PYTHONUNBUFFERED=1 \
-    PORT=8000
+ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8000
-
-# Default: start token server. For LiveKit worker, pass: uv run python -m server.main start
-CMD ["uv", "run", "python", "-m", "server.token_server"]
+# Production command for LiveKit Cloud Agent worker
+CMD ["uv", "run", "python", "agent.py", "start"]

@@ -1,0 +1,9 @@
+﻿# LiveKit Cloud Agent Configuration Template
+# This file is generated and updated automatically by: lk agent create
+# Or manually configured with your LiveKit Cloud project subdomain and agent ID.
+
+[project]
+subdomain = "your-project-subdomain"
+
+[agent]
+id = "your-agent-id"
