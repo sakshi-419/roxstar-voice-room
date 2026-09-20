@@ -49,7 +49,8 @@ def build_llm(timeout: float = 15.0) -> llm.LLM:
             raise RuntimeError("GROQ_API_KEY is not configured in backend/.env.")
 
         primary_model = settings.llm_model or "qwen/qwen3.8-27b"
-        fallback_model = "openai/gpt-oss-20b" if primary_model != "openai/gpt-oss-20b" else "allam-2-7b"
+        if primary_model in ("openai/gpt-oss-20b", "allam-2-7b", ""):
+            primary_model = "qwen/qwen3.8-27b"
 
         # Primary Groq LLM (bounded tokens for ultra-fast voice responses and OTPM safety)
         try:
@@ -63,20 +64,6 @@ def build_llm(timeout: float = 15.0) -> llm.LLM:
             logger.info("llm_provider_registered", provider="groq", model=primary_model)
         except Exception as exc:
             logger.error("primary_llm_init_failed", provider="groq", model=primary_model, error=str(exc))
-
-        # Fallback Groq LLM
-        if fallback_model != primary_model:
-            try:
-                fallback_llm = groq.LLM(
-                    model=fallback_model,
-                    api_key=settings.groq_api_key,
-                    temperature=0.7,
-                    max_completion_tokens=150,
-                )
-                providers.append(fallback_llm)
-                logger.info("llm_fallback_registered", provider="groq", model=fallback_model)
-            except Exception as exc:
-                logger.debug("fallback_llm_init_failed", provider="groq", model=fallback_model, error=str(exc))
 
     # 2. Google Gemini Provider
     elif active_provider == "google":
