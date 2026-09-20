@@ -1,12 +1,11 @@
-﻿"""
+"""
 backend/core/language_detector.py
 -----------------------------------
-Lightweight language detector for Roxstar AI Voice Room.
+Lightweight, robust language detector for Roxstar AI Voice Room.
 
-Detects whether a user''s text is Hindi (Devanagari), Hinglish (Roman-script Hindi),
-or English, and returns an explicit language response instruction for the LLM.
-
-This runs synchronously and must be fast (no network calls).
+Detects whether a user's text is Hindi (Devanagari), Hinglish (Roman-script Hindi),
+or English, with conversational follow-up continuity.
+Strictly prevents Spanish or any foreign language output.
 """
 
 from __future__ import annotations
@@ -17,33 +16,37 @@ import re
 _RE_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
 
 # Common Hinglish Hindi words written in Roman script (high-signal markers)
-# IMPORTANT: "sathi" and "dost" are excluded — they appear equally in English sentences
-# addressed to the bots and should not bias language detection.
+# Exclude bot names ('sathi', 'dost') so addressing does not bias detection
 _HINGLISH_MARKERS = frozenset({
     # Verbs and helpers (high signal)
-    "hai", "hain", "hoga", "tha", "the", "thi", "hoon",
-    "karna", "karte", "karein", "karta", "karti", "kiya",
-    "batao", "samjhao", "bolo", "suno", "dekho", "ruko",
+    "hai", "hain", "hoga", "hogi", "hoge", "tha", "the", "thi", "hoon", "hun",
+    "karna", "karte", "karein", "karta", "karti", "kiya", "kariye", "kar", "karo",
+    "batao", "bataiye", "samjhao", "samjhaiye", "bolo", "suno", "dekho", "ruko",
     # Pronouns / common words (high signal)
-    "mujhe", "mera", "meri", "mere", "tumhe", "tumhara", "aap", "apna",
-    "yeh", "woh", "kaise", "kyun", "kab", "kahan", "kaun",
-    "main", "hum", "tum", "nahi", "nahin",
-    "agar", "toh", "lekin", "matlab", "waise", "seedha",
+    "mujhe", "mera", "meri", "mere", "tumhe", "tumhara", "tumhari", "aap", "apna", "apni", "apne",
+    "yeh", "woh", "kaise", "kaisa", "kaisi", "kyun", "kyu", "kab", "kahan", "kaun", "kisko",
+    "main", "hum", "tum", "nahi", "nahin", "na",
+    "agar", "toh", "lekin", "matlab", "waise", "seedha", "ya",
     # Expressions (high signal)
-    "arrey", "achha", "theek", "bilkul", "haan",
-    "samajh", "samjhao", "thoda", "zyada", "bahut", "acha",
-    "bhai", "yaar",
+    "arrey", "arey", "achha", "accha", "theek", "bilkul", "haan", "han",
+    "samajh", "thoda", "zyada", "bahut", "bhai", "yaar",
     # Grammar particles (very high signal for Hinglish)
-    "kya", "hota", "hoti", "mein", "wala", "wali", "pe", "ke", "ko",
+    "kya", "hota", "hoti", "hote", "mein", "wala", "wali", "wale", "pe", "par", "ke", "ko",
     "kuch", "sab", "sirf", "pehle", "baad", "jaise", "aur",
-    "se", "mein", "ab", "phir",
+    "se", "ab", "phir", "fir",
 })
 
-# Words that are addressed to the bot — strip these from language analysis
-_BOT_NAMES = frozenset({"sathi", "saathi", "dost", "roxstar"})
+# Bot names and honorifics that shouldn't skew detection
+_BOT_NAMES = frozenset({"sathi", "saathi", "dost", "roxstar", "ji", "bhai", "yaar"})
 
-# Minimum fraction of words (excluding bot names) that must be Hinglish markers
-_HINGLISH_THRESHOLD = 0.22  # 22% of non-bot words
+# Generic short follow-ups that should inherit the previous language
+_GENERIC_SHORT_FOLLOW_UPS = frozenset({
+    "why", "why so", "how", "how so", "what about that", "what does that mean",
+    "explain that again", "explain again", "can you explain", "tell me more",
+    "one more example", "give an example", "give me an example",
+    "can you give me a simple example", "can you give me an example",
+    "give example", "more example", "more examples", "elaborate",
+})
 
 # Phrases that explicitly request a specific language response
 _RE_FORCE_ENGLISH = re.compile(
@@ -63,79 +66,90 @@ _RE_FORCE_HINGLISH = re.compile(
 )
 
 
-def detect_language(text: str) -> str:
+def detect_language(text: str, previous_language: str | None = None) -> str:
     """
-    Detect whether the text is HINDI, HINGLISH, or ENGLISH.
-
-    Returns one of: "HINDI", "HINGLISH", "ENGLISH"
+    Detect whether the user text is HINDI, HINGLISH, or ENGLISH.
+    Inherits previous_language for short conversational follow-ups.
     """
     if not text or not text.strip():
-        return "HINGLISH"
+        return previous_language or "HINGLISH"
 
-    # 1. Explicit override — user forces a language
-    if _RE_FORCE_ENGLISH.search(text):
+    cleaned = text.strip()
+
+    # 1. Explicit override phrases
+    if _RE_FORCE_ENGLISH.search(cleaned):
         return "ENGLISH"
-    if _RE_FORCE_HINDI.search(text):
+    if _RE_FORCE_HINDI.search(cleaned):
         return "HINDI"
-    if _RE_FORCE_HINGLISH.search(text):
+    if _RE_FORCE_HINGLISH.search(cleaned):
         return "HINGLISH"
 
-    # 2. Devanagari characters → pure Hindi script
-    devanagari_chars = len(_RE_DEVANAGARI.findall(text))
-    total_chars = len(text.strip())
-    if total_chars > 0 and devanagari_chars / total_chars > 0.15:
+    # 2. Devanagari script detection
+    devanagari_chars = len(_RE_DEVANAGARI.findall(cleaned))
+    if devanagari_chars >= 2 or (len(cleaned) > 0 and devanagari_chars / len(cleaned) > 0.1):
         return "HINDI"
 
-    # 3. Extract words, removing bot names from consideration
-    all_words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
-    # Filter out bot names — they don''t contribute to language detection
-    words = [w for w in all_words if w not in _BOT_NAMES]
+    # 3. Word analysis in Latin script
+    all_words = re.findall(r"\b[a-zA-Z]+\b", cleaned.lower())
+    non_bot_words = [w for w in all_words if w not in _BOT_NAMES]
 
-    if not words:
-        # Only bot names or punctuation — check for non-Latin characters
-        if _RE_DEVANAGARI.search(text):
-            return "HINDI"
-        return "HINGLISH"  # Default for bot-name-only messages
+    if not non_bot_words:
+        return previous_language or "HINGLISH"
 
-    marker_count = sum(1 for w in words if w in _HINGLISH_MARKERS)
-    ratio = marker_count / len(words)
+    # 4. Check for short follow-up inheritance
+    norm_phrase = " ".join(non_bot_words)
+    has_hinglish = any(w in _HINGLISH_MARKERS for w in non_bot_words)
 
-    if ratio >= _HINGLISH_THRESHOLD:
+    if previous_language and not has_hinglish:
+        if norm_phrase in _GENERIC_SHORT_FOLLOW_UPS:
+            return previous_language
+
+    # 5. Hinglish markers
+    marker_count = sum(1 for w in non_bot_words if w in _HINGLISH_MARKERS)
+    ratio = marker_count / len(non_bot_words)
+
+    # In short queries (<= 5 words), even 1 Hinglish marker ('thoda', 'kya', 'batao', 'aur', 'hai') means Hinglish
+    if len(non_bot_words) <= 5 and marker_count >= 1:
         return "HINGLISH"
 
-    # 4. Default — English
+    if ratio >= 0.18:
+        return "HINGLISH"
+
+    # 6. Default to English
     return "ENGLISH"
 
 
-def get_language_instruction(text: str) -> str:
+def get_language_instruction(text: str, previous_language: str | None = None) -> str:
     """
-    Detect language from user text and return an explicit LLM response instruction.
-    This instruction is injected into the system prompt per turn.
+    Detect language from user text and return explicit LLM response instructions.
+    Strictly forbids Spanish, French, German, or any foreign language.
     """
-    lang = detect_language(text)
+    lang = detect_language(text, previous_language=previous_language)
 
     if lang == "HINDI":
         return (
             "LANGUAGE RULE FOR THIS TURN: The user spoke in Hindi (Devanagari). "
-            "Respond in natural conversational Hindi. You may keep common technical "
-            "terms (AI, model, data, training, Python, SQL, API, algorithm, "
-            "Machine Learning, Deep Learning) in English as Indians commonly use them. "
-            "Do NOT respond in English. Do NOT use overly formal or bookish Hindi. "
-            "Use natural conversational Hindi as spoken in everyday life."
+            "Respond in natural, warm conversational Hindi using Devanagari script. "
+            "Keep common technical terms (AI, machine learning, supervised learning, "
+            "model, dataset, API, cloud computing, database, Python, etc.) naturally "
+            "in English as spoken in India. "
+            "Under NO circumstances respond in Spanish, French, German, or any foreign language. "
+            "Do NOT use bookish or archaic Hindi. Keep your response concise (1 to 3 short sentences)."
         )
     elif lang == "HINGLISH":
         return (
             "LANGUAGE RULE FOR THIS TURN: The user spoke in Hinglish (Roman-script Hindi-English mix). "
-            "Respond in natural Indian Hinglish. Mix conversational Hindi words with English naturally. "
-            "For example: 'Machine Learning mein model data se patterns learn karta hai.' "
-            "Keep technical terms in English (AI, model, training, data, Python, SQL, API, algorithm). "
-            "Do NOT respond in pure formal English. Do NOT use Devanagari script. "
-            "Sound like a friendly Indian conversationalist."
+            "Respond in natural Indian Hinglish using Roman script. Mix conversational Hindi words "
+            "with English naturally (e.g. 'Supervised learning mein model labeled data se train hota hai...'). "
+            "Keep technical terms in English (AI, machine learning, supervised learning, model, "
+            "dataset, API, cloud computing, database, Python, etc.). "
+            "Under NO circumstances respond in Spanish, French, German, or any foreign language. "
+            "Do NOT use Devanagari script. Keep your response concise (1 to 3 short sentences)."
         )
     else:
         return (
             "LANGUAGE RULE FOR THIS TURN: The user spoke in English. "
-            "Respond clearly in English. You may naturally include warm Indian expressions "
-            "such as 'bilkul', 'achha', 'yaar' if it feels natural, but keep the "
-            "response primarily in English."
+            "Respond clearly, warmly, and naturally in English. "
+            "Under NO circumstances respond in Spanish, French, German, or any foreign language. "
+            "Keep your response concise (1 to 3 short sentences)."
         )

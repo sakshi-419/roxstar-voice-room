@@ -325,10 +325,16 @@ async def dost_entrypoint(ctx: JobContext) -> None:
                             if not lock_ok:
                                 return
                         try:
+                            from core.language_detector import detect_language, get_language_instruction
+                            prev_lang = getattr(agent, "_last_detected_language", "HINGLISH")
+                            detected_lang = detect_language(chat_text, previous_language=prev_lang)
+                            agent._last_detected_language = detected_lang
+                            lang_instruction = get_language_instruction(chat_text, previous_language=detected_lang)
                             room_context = await state.build_context_string(n=5)
-                            updated_instructions = agent._raw_instructions.format(
+                            updated_instructions = agent.format_instructions(
                                 room_context=room_context,
                                 speaker_profile="No prior info.",
+                                language_instruction=lang_instruction,
                             )
                             await agent.update_instructions(updated_instructions)
                             chat_ctx = llm.ChatContext()
@@ -591,10 +597,16 @@ async def sathi_entrypoint(ctx: JobContext) -> None:
                             if not lock_ok:
                                 return
                         try:
+                            from core.language_detector import detect_language, get_language_instruction
+                            prev_lang = getattr(agent, "_last_detected_language", "HINGLISH")
+                            detected_lang = detect_language(chat_text, previous_language=prev_lang)
+                            agent._last_detected_language = detected_lang
+                            lang_instruction = get_language_instruction(chat_text, previous_language=detected_lang)
                             room_context = await state.build_context_string(n=5)
-                            updated_instructions = agent._raw_instructions.format(
+                            updated_instructions = agent.format_instructions(
                                 room_context=room_context,
                                 speaker_profile="No prior info.",
+                                language_instruction=lang_instruction,
                             )
                             await agent.update_instructions(updated_instructions)
                             chat_ctx = llm.ChatContext()

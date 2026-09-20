@@ -93,13 +93,25 @@ class BaseBotAgent(Agent):
         greeting: str = "",
         **kwargs: Any,
     ) -> None:
-        super().__init__(instructions=instructions, **kwargs)
+        self._prompt_template = instructions
+        self._last_detected_language = "HINGLISH"
+        default_lang_instr = (
+            "LANGUAGE DIRECTIVE: Under NO circumstances speak Spanish, French, German, or any foreign language. "
+            "Respond in natural Indian Hinglish, Hindi (Devanagari if user spoke Hindi), or English matching the user."
+        )
+        initial_instructions = (
+            instructions
+            .replace("{detected_language_instruction}", default_lang_instr)
+            .replace("{room_context}", "Room conversation just started.")
+            .replace("{speaker_profile}", "No prior info.")
+        )
+        super().__init__(instructions=initial_instructions, **kwargs)
         self.bot_name = bot_name
         self.state = state
         self.latency_tracker = latency_tracker or LatencyTracker()
         # greeting is stored for reference only - NEVER auto-sent
         self.greeting = greeting
-        self._raw_instructions = instructions
+        self._raw_instructions = initial_instructions
         self._last_transcribed_speaker_id: str | None = None
         self._mock_session: Any = None
 
@@ -129,6 +141,24 @@ class BaseBotAgent(Agent):
         """
         logger.info("bot_entered_session_silent", bot=self.bot_name, room=self.state.room_name)
         await self.state.load_history_from_redis()
+
+    def format_instructions(
+        self,
+        room_context: str = "Room conversation active.",
+        speaker_profile: str = "Active speaker.",
+        language_instruction: str = "",
+    ) -> str:
+        """Safely format system prompt template replacing placeholders."""
+        text = getattr(self, "_prompt_template", "") or self._raw_instructions
+        if not language_instruction:
+            language_instruction = (
+                f"LANGUAGE RULE: Respond in natural {getattr(self, '_last_detected_language', 'HINGLISH').lower()}. "
+                "Match the speaker's language style. NEVER speak Spanish or any foreign language."
+            )
+        text = text.replace("{detected_language_instruction}", language_instruction)
+        text = text.replace("{room_context}", room_context or "No prior context.")
+        text = text.replace("{speaker_profile}", speaker_profile or "Speaker profile available.")
+        return text
 
     async def on_participant_connected(self, participant: Any) -> None:
         """Called when a participant joins the LiveKit room.
@@ -297,15 +327,29 @@ class BaseBotAgent(Agent):
         except Exception:
             pass
 
-        # 10. Dynamically inject updated room context & speaker profile into system instructions
+        # 10. Language detection, continuity & dynamic instruction update
+        from core.language_detector import detect_language, get_language_instruction
+        prev_lang = getattr(self, "_last_detected_language", "HINGLISH")
+        detected_lang = detect_language(user_text, previous_language=prev_lang)
+        self._last_detected_language = detected_lang
+        lang_instruction = get_language_instruction(user_text, previous_language=detected_lang)
+        logger.info(
+            "language_detected",
+            bot=self.bot_name,
+            language=detected_lang,
+            text_preview=user_text[:60].encode("ascii", "replace").decode("ascii"),
+        )
+
         room_context = await self.state.build_context_string(n=5)
         speaker_profile = await self.state.get_speaker_profile(speaker_id)
 
         try:
-            updated_instructions = self._raw_instructions.format(
+            updated_instructions = self.format_instructions(
                 room_context=room_context,
                 speaker_profile=speaker_profile,
+                language_instruction=lang_instruction,
             )
+            self._raw_instructions = updated_instructions
             await self.update_instructions(updated_instructions)
         except Exception as exc:
             logger.debug("instruction_formatting_skipped", error=str(exc))

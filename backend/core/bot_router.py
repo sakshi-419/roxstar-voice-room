@@ -26,6 +26,11 @@ logger = get_logger("roxstar.core.router")
 
 # STT mishearing corrections (longest-match first)
 _STT_CORRECTIONS = sorted([
+    ("साथी जी",    "sathi"),
+    ("साथी",       "sathi"),
+    ("दोस्त जी",   "dost"),
+    ("दोस्त भाई",  "dost"),
+    ("दोस्त",      "dost"),
     ("dost ji",    "dost"),
     ("dost jee",   "dost"),
     ("dostji",     "dost"),
@@ -57,7 +62,10 @@ def normalize_transcript(text: str) -> str:
     text = re.sub(r"[^\w\s\u0900-\u097F]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     for wrong, right in _STT_CORRECTIONS:
-        text = re.sub(r"\b" + re.escape(wrong) + r"\b", right, text)
+        if any(ord(c) > 127 for c in wrong):
+            text = text.replace(wrong, right)
+        else:
+            text = re.sub(r"\b" + re.escape(wrong) + r"\b", right, text)
     return text
 
 
