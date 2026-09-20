@@ -42,6 +42,8 @@ from config import settings
 from core.latency_tracker import LatencyTracker
 from core.logger import configure_logging, get_logger
 from core.room_state import RoomState, TurnRecord
+from livekit import rtc
+from core.bot_router import BotRouter
 from livekit.agents.voice.room_io import RoomInputOptions
 from livekit.agents import (
     APIConnectOptions,
@@ -147,7 +149,11 @@ async def dost_entrypoint(ctx: JobContext) -> None:
             nonlocal t_audio_recv
             if str(getattr(ev, "new_state", "")).lower() == "speaking":
                 t_audio_recv = time.time()
-                # Barge-in: release speaking lock immediately so interruptions take precedence
+                # Barge-in: interrupt active speech immediately so human takes precedence
+                try:
+                    session.interrupt()
+                except Exception:
+                    pass
                 asyncio.create_task(state.release_speaking_lock("roxstar-dost"))
                 logger.info("USER_AUDIO_RECEIVED", room=room_name)
                 logger.info("STT_STARTED", room=room_name)
@@ -155,6 +161,9 @@ async def dost_entrypoint(ctx: JobContext) -> None:
         @session.on("user_input_transcribed")
         def on_user_input_transcribed(ev: UserInputTranscribedEvent) -> None:
             nonlocal stt_dur_ms
+            speaker_id = getattr(ev, "speaker_id", None)
+            if speaker_id and hasattr(agent, "set_last_speaker"):
+                agent.set_last_speaker(speaker_id)
             if getattr(ev, "is_final", False) and getattr(ev, "transcript", ""):
                 if t_audio_recv > 0:
                     stt_dur_ms = (time.time() - t_audio_recv) * 1000.0
@@ -231,7 +240,7 @@ async def dost_entrypoint(ctx: JobContext) -> None:
 
         # 6. Start the agent session connected to the room
         logger.info("starting_dost_agent_session", room=room_name)
-        await session.start(agent, room=ctx.room, room_input_options=RoomInputOptions(close_on_disconnect=False))
+        await session.start(agent, room=ctx.room, room_input_options=RoomInputOptions(participant_kinds=[rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD], close_on_disconnect=False))
         try:
             await ctx.room.local_participant.set_name("Dost")
         except Exception:
@@ -261,8 +270,17 @@ async def dost_entrypoint(ctx: JobContext) -> None:
                 sname_l = (sender_name or "").lower()
                 if ("dost" in sid_l or "sathi" in sid_l or
                         "dost" in sname_l or "sathi" in sname_l or
-                        "roxstar" in sid_l):
+                        "roxstar" in sid_l or "agent" in sid_l or
+                        (ctx.room.local_participant and sid_l == ctx.room.local_participant.identity.lower())):
                     logger.debug("ai_chat_loop_blocked", sender_id=sender_id, bot="roxstar-dost")
+                    return
+
+                if BotRouter.is_stop_command(chat_text):
+                    try:
+                        session.interrupt()
+                    except Exception:
+                        pass
+                    asyncio.create_task(state.release_speaking_lock("roxstar-dost"))
                     return
 
                 logger.info("TEXT_CHAT_RECEIVED", bot="roxstar-dost", sender=sender_name, text=chat_text[:80].encode("ascii", "replace").decode("ascii"))
@@ -392,7 +410,11 @@ async def sathi_entrypoint(ctx: JobContext) -> None:
             nonlocal t_audio_recv
             if str(getattr(ev, "new_state", "")).lower() == "speaking":
                 t_audio_recv = time.time()
-                # Barge-in: release speaking lock immediately so interruptions take precedence
+                # Barge-in: interrupt active speech immediately so human takes precedence
+                try:
+                    session.interrupt()
+                except Exception:
+                    pass
                 asyncio.create_task(state.release_speaking_lock("roxstar-sathi"))
                 logger.info("USER_AUDIO_RECEIVED", room=room_name)
                 logger.info("STT_STARTED", room=room_name)
@@ -400,6 +422,9 @@ async def sathi_entrypoint(ctx: JobContext) -> None:
         @session.on("user_input_transcribed")
         def on_user_input_transcribed(ev: UserInputTranscribedEvent) -> None:
             nonlocal stt_dur_ms
+            speaker_id = getattr(ev, "speaker_id", None)
+            if speaker_id and hasattr(agent, "set_last_speaker"):
+                agent.set_last_speaker(speaker_id)
             if getattr(ev, "is_final", False) and getattr(ev, "transcript", ""):
                 if t_audio_recv > 0:
                     stt_dur_ms = (time.time() - t_audio_recv) * 1000.0
@@ -475,7 +500,7 @@ async def sathi_entrypoint(ctx: JobContext) -> None:
 
         # 6. Start the agent session connected to the room
         logger.info("starting_sathi_agent_session", room=room_name)
-        await session.start(agent, room=ctx.room, room_input_options=RoomInputOptions(close_on_disconnect=False))
+        await session.start(agent, room=ctx.room, room_input_options=RoomInputOptions(participant_kinds=[rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD], close_on_disconnect=False))
         try:
             await ctx.room.local_participant.set_name("Sathi")
         except Exception:
@@ -505,8 +530,17 @@ async def sathi_entrypoint(ctx: JobContext) -> None:
                 sname_l = (sender_name or "").lower()
                 if ("dost" in sid_l or "sathi" in sid_l or
                         "dost" in sname_l or "sathi" in sname_l or
-                        "roxstar" in sid_l):
+                        "roxstar" in sid_l or "agent" in sid_l or
+                        (ctx.room.local_participant and sid_l == ctx.room.local_participant.identity.lower())):
                     logger.debug("ai_chat_loop_blocked", sender_id=sender_id, bot="roxstar-sathi")
+                    return
+
+                if BotRouter.is_stop_command(chat_text):
+                    try:
+                        session.interrupt()
+                    except Exception:
+                        pass
+                    asyncio.create_task(state.release_speaking_lock("roxstar-sathi"))
                     return
 
                 logger.info("TEXT_CHAT_RECEIVED", bot="roxstar-sathi", sender=sender_name, text=chat_text[:80].encode("ascii", "replace").decode("ascii"))
@@ -628,6 +662,30 @@ async def entrypoint(ctx: JobContext) -> None:
             )
             return
 
+    heartbeat_task = None
+
+    async def _persona_heartbeat() -> None:
+        try:
+            while True:
+                await asyncio.sleep(10)
+                if redis:
+                    await redis.set(active_key, ctx.job.id, ex=30)
+        except asyncio.CancelledError:
+            pass
+        except Exception as err:
+            logger.debug("persona_heartbeat_error", error=str(err))
+
+    if redis:
+        heartbeat_task = asyncio.create_task(_persona_heartbeat())
+
+    @ctx.room.on("disconnected")
+    def on_disconnected() -> None:
+        logger.info("room_disconnected_releasing_persona_lock", agent=target_agent, room=room_name)
+        if heartbeat_task and not heartbeat_task.done():
+            heartbeat_task.cancel()
+        if redis:
+            asyncio.create_task(redis.delete(active_key))
+
     try:
         handler = HANDLERS.get(target_agent)
         if handler:
@@ -638,9 +696,13 @@ async def entrypoint(ctx: JobContext) -> None:
                 target_agent=target_agent,
             )
             await dost_entrypoint(ctx)
-    finally:
+    except Exception as exc:
+        logger.error("agent_entrypoint_failed", target_agent=target_agent, error=str(exc))
+        if heartbeat_task and not heartbeat_task.done():
+            heartbeat_task.cancel()
         if redis:
             await redis.delete(active_key)
+        raise
 
 
 if __name__ == "__main__":

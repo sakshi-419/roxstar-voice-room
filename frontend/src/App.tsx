@@ -255,7 +255,7 @@ function RoomView({
   participantName: string
   onLeave: () => void
 }) {
-  const participants = useParticipants()
+  const rawParticipants = useParticipants()
   const { isMicrophoneEnabled, localParticipant } = useLocalParticipant()
   const room = useRoomContext()
   const { chatMessages, send, isSending } = useChat()
@@ -264,6 +264,48 @@ function RoomView({
   const [showChat, setShowChat] = useState(true)
   const [chatInput, setChatInput] = useState('')
   const chatBottomRef = useRef<HTMLDivElement>(null)
+
+  // Strict participant deduplication: Exactly 1 User card, at most 1 Dost card, at most 1 Sathi card
+  const participants = (() => {
+    const list: Participant[] = []
+
+    // 1. Local user participant always first
+    const local = rawParticipants.find((p) => p.isLocal) || (localParticipant as Participant)
+    if (local) list.push(local)
+
+    // 2. Exactly one Dost participant (pick active/speaking or most recent)
+    const dostCandidates = rawParticipants.filter(
+      (p) => !p.isLocal && (p.identity.toLowerCase().includes('dost') || (p.name || '').toLowerCase().includes('dost'))
+    )
+    if (dostCandidates.length > 0) {
+      const activeDost = dostCandidates.find((p) => p.isSpeaking) || dostCandidates[dostCandidates.length - 1]
+      list.push(activeDost)
+    }
+
+    // 3. Exactly one Sathi participant (pick active/speaking or most recent)
+    const sathiCandidates = rawParticipants.filter(
+      (p) => !p.isLocal && (p.identity.toLowerCase().includes('sathi') || (p.name || '').toLowerCase().includes('sathi'))
+    )
+    if (sathiCandidates.length > 0) {
+      const activeSathi = sathiCandidates.find((p) => p.isSpeaking) || sathiCandidates[sathiCandidates.length - 1]
+      list.push(activeSathi)
+    }
+
+    // 4. Other human peers deduplicated by identity
+    const seen = new Set(list.map((p) => p.identity))
+    for (const p of rawParticipants) {
+      if (!p.isLocal && !seen.has(p.identity)) {
+        const idL = (p.identity || '').toLowerCase()
+        const nmL = (p.name || '').toLowerCase()
+        if (!idL.includes('dost') && !idL.includes('sathi') && !nmL.includes('dost') && !nmL.includes('sathi')) {
+          seen.add(p.identity)
+          list.push(p)
+        }
+      }
+    }
+
+    return list
+  })()
 
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })

@@ -1,13 +1,13 @@
-"""
+﻿"""
 backend/core/bot_router.py
 --------------------------
-Distributed bot routing engine for Roxstar Voice Room (Phase 5+).
+Distributed bot routing engine for Roxstar Voice Room.
 
 Priority:
-  1. Explicit Direct Addressing (normalized transcript matching)
-  2. Multi-turn Follow-up Continuation (last_bot preserved)
-  3. Persona / Context Affinity keywords
-  4. Turn Alternation (Round-Robin)
+  1. STOP / INTERRUPT command (ruko, stop, bas, chup, wait, etc.) -> "STOP"
+  2. Explicit Direct Addressing (normalized transcript matching for Dost / Sathi)
+  3. Conversational Continuity (retain active last_bot for ongoing discussion)
+  4. Persona / Context Affinity keywords
   5. Default Fallback -> roxstar-dost
 """
 
@@ -30,6 +30,7 @@ _STT_CORRECTIONS = sorted([
     ("dost jee",   "dost"),
     ("dostji",     "dost"),
     ("dostjee",    "dost"),
+    ("dost bhai",  "dost"),
     ("dosth",      "dost"),
     ("dostu",      "dost"),
     ("saathi ji",  "sathi"),
@@ -38,6 +39,7 @@ _STT_CORRECTIONS = sorted([
     ("saathijee",  "sathi"),
     ("sathi ji",   "sathi"),
     ("sathi jee",  "sathi"),
+    ("sathi bhai", "sathi"),
     ("sathiji",    "sathi"),
     ("saathi",     "sathi"),
     ("shathi",     "sathi"),
@@ -47,7 +49,10 @@ _STT_CORRECTIONS = sorted([
 ], key=lambda x: -len(x[0]))
 
 
-def normalize_transcript(text):
+def normalize_transcript(text: str) -> str:
+    """Normalize transcript for reliable matching of Hindi, Hinglish and English."""
+    if not text:
+        return ""
     text = unicodedata.normalize("NFKC", text).lower()
     text = re.sub(r"[^\w\s\u0900-\u097F]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
@@ -56,10 +61,16 @@ def normalize_transcript(text):
     return text
 
 
+# STOP / Interruption regex covering Hindi, Hinglish, and English
+RE_STOP = re.compile(
+    r"\b(?:stop(?:\s+karo)?|bas(?:\s+karo)?|ruko|ruk\s*jao|ruk|chup(?:\s+karo)?|shant|wait|hold\s*on|ek\s*second|ek\s*sec)\b",
+    re.IGNORECASE,
+)
+
 _DOST_PATTERNS = re.compile(
     r"(?:(?:hey|hi|hello|namaste|hy|hai|hii|helo|arey|are|arre|bolo)\s+dost"
     r"|^dost\b|\bdost$"
-    r"|\bdost\s+(?:suno|bolo|batao|bata|samjhao|samjha|mujhe|muje|ek|kya|kuch|aur|ji|yaar|na)"
+    r"|\bdost\s+(?:suno|bolo|batao|bata|samjhao|samjha|mujhe|muje|ek|kya|kuch|aur|ji|yaar|bhai|na)"
     r"|(?<!\w)dost(?!\w))",
     re.IGNORECASE,
 )
@@ -98,7 +109,15 @@ DOST_AFFINITY_KEYWORDS = frozenset({
 
 class BotRouter:
     @classmethod
-    async def select_bot(cls, state, transcript):
+    def is_stop_command(cls, transcript: str) -> bool:
+        """Check if transcript is an explicit STOP/interruption command."""
+        if not transcript:
+            return False
+        norm = normalize_transcript(transcript)
+        return bool(RE_STOP.search(norm))
+
+    @classmethod
+    async def select_bot(cls, state: RoomState, transcript: str) -> str:
         raw_text = transcript.strip()
         norm_text = normalize_transcript(raw_text)
         words = set(re.findall(r"\b\w+\b", norm_text))
@@ -106,6 +125,12 @@ class BotRouter:
         logger.info("ROUTE_INPUT", raw=raw_text[:80])
         logger.info("ROUTE_NORMALIZED", norm=norm_text[:80])
 
+        # Priority 1: STOP / Interruption command
+        if cls.is_stop_command(norm_text):
+            logger.info("ROUTE_SELECTED", bot="STOP", reason="stop_interrupt_command")
+            return "STOP"
+
+        # Priority 2: Direct address (explicit Dost vs Sathi)
         dost_m = _DOST_PATTERNS.search(norm_text)
         sathi_m = _SATHI_PATTERNS.search(norm_text)
 
@@ -116,10 +141,12 @@ class BotRouter:
             logger.info("ROUTE_SELECTED", bot="roxstar-sathi", reason="explicit_address")
             return "roxstar-sathi"
         if dost_m and sathi_m:
+            # If both mentioned, whichever was addressed first takes precedence
             selected = "roxstar-dost" if dost_m.start() <= sathi_m.start() else "roxstar-sathi"
             logger.info("ROUTE_SELECTED", bot=selected, reason="explicit_address_both_first_mention")
             return selected
 
+        # Priority 3: Conversational Continuity (keep active speaker during conversation)
         last_bot = await state.get_last_bot()
         if not last_bot:
             recent = await state.get_context_window(5)
@@ -128,10 +155,13 @@ class BotRouter:
                     last_bot = turn.bot_name
                     break
 
-        if last_bot and RE_FOLLOW_UP.search(norm_text):
-            logger.info("ROUTE_SELECTED", bot=last_bot, reason="follow_up_last_bot")
+        if last_bot:
+            # During an active discussion with a bot, keep that bot as the current conversational speaker
+            # Do NOT alternate bots automatically when a conversation is already active
+            logger.info("ROUTE_SELECTED", bot=last_bot, reason="conversation_continuity")
             return last_bot
 
+        # Priority 4: Initial Turn Affinity (No active bot yet in the room)
         sathi_score = sum(1 for w in words if w in SATHI_AFFINITY_KEYWORDS)
         dost_score = sum(1 for w in words if w in DOST_AFFINITY_KEYWORDS)
 
@@ -144,12 +174,6 @@ class BotRouter:
                         dost_score=dost_score, sathi_score=sathi_score)
             return "roxstar-dost"
 
-        if last_bot == "roxstar-dost":
-            logger.info("ROUTE_SELECTED", bot="roxstar-sathi", reason="alternation")
-            return "roxstar-sathi"
-        if last_bot == "roxstar-sathi":
-            logger.info("ROUTE_SELECTED", bot="roxstar-dost", reason="alternation")
-            return "roxstar-dost"
-
+        # Priority 5: Default Fallback -> exactly one bot (roxstar-dost)
         logger.info("ROUTE_SELECTED", bot="roxstar-dost", reason="default_fallback")
         return "roxstar-dost"

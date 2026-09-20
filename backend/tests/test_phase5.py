@@ -127,18 +127,34 @@ async def test_technical_and_playful_affinity():
 
 @pytest.mark.asyncio
 async def test_ten_query_alternation():
-    """Verify neutral queries cleanly alternate between Dost and Sathi across 10 turns."""
-    state = RoomState("test-router-alternation")
+    """Verify conversation continuity: active bot is retained, and explicit switch changes active bot."""
+    state = RoomState("test-router-continuity")
+    redis = await state._get_redis()
+    if redis:
+        await redis.delete("room:test-router-continuity:last_bot")
 
-    current_expected = "roxstar-dost"
+    # Engage Dost
+    await state.set_last_bot("roxstar-dost")
 
-    for i in range(10):
+    for i in range(5):
         neutral_query = f"Yeh statement number {i} hai"
         selected = await BotRouter.select_bot(state, neutral_query)
-        assert selected == current_expected, f"Turn {i}: expected {current_expected}, got {selected}"
+        assert selected == "roxstar-dost", f"Turn {i}: expected roxstar-dost, got {selected}"
 
-        await state.set_last_bot(selected)
-        current_expected = "roxstar-sathi" if selected == "roxstar-dost" else "roxstar-dost"
+    # Explicit switch to Sathi
+    switch_query = "Sathi, ab tum batao"
+    selected = await BotRouter.select_bot(state, switch_query)
+    assert selected == "roxstar-sathi"
+    await state.set_last_bot("roxstar-sathi")
+
+    # Conversation continues with Sathi
+    for i in range(5, 10):
+        neutral_query = f"Yeh statement number {i} hai"
+        selected = await BotRouter.select_bot(state, neutral_query)
+        assert selected == "roxstar-sathi", f"Turn {i}: expected roxstar-sathi, got {selected}"
+
+    if redis:
+        await redis.delete("room:test-router-continuity:last_bot")
 
 
 @pytest.mark.asyncio

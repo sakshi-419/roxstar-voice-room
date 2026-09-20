@@ -238,6 +238,11 @@ async def dispatch_agents(req: DispatchRequest) -> DispatchResponse:
                     continue
 
                 if redis:
+                    active_key = f"room:{room_name}:active_persona:{agent}"
+                    if await redis.get(active_key):
+                        already_running.append(agent)
+                        continue
+
                     # 10-second lock prevents rapid double-clicks from issuing two dispatches
                     lock_key = f"room:{room_name}:dispatch_lock:{agent}"
                     acquired = await redis.set(lock_key, "1", nx=True, ex=10)
