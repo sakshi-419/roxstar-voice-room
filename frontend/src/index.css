@@ -566,7 +566,7 @@ body {
   color: var(--text-primary);
 }
 
-/* ── Live Room Text Chat Styling (Glassmorphism & Responsive) ── */
+/* -- Live Room Text Chat Styling (Glassmorphism & Responsive) -- */
 .chat-container {
   display: flex;
   flex-direction: column;
