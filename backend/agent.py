@@ -1,4 +1,4 @@
-﻿"""
+"""
 backend/agent.py
 ----------------
 LiveKit Agents entrypoint for Roxstar AI Voice Room.

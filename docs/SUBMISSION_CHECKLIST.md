@@ -1,4 +1,4 @@
-﻿# Roxstar AI Voice Room — Submission Checklist & Audit
+# Roxstar AI Voice Room — Submission Checklist & Audit
 
 This checklist verifies all submission requirements for the Roxstar AI Voice Room assignment.
 

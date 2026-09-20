@@ -1,4 +1,4 @@
-﻿# Multi-stage production container for LiveKit Cloud Agent
+# Multi-stage production container for LiveKit Cloud Agent
 FROM python:3.12-slim AS runtime
 
 WORKDIR /app

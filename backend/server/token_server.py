@@ -10,6 +10,7 @@ Endpoints:
 """
 
 from __future__ import annotations
+from typing import Optional
 
 import logging
 import os
@@ -27,7 +28,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from config import settings
-from core.redis_client import get_redis, ping_redis
+from core.redis_client import check_redis_health, get_redis, ping_redis
 from livekit.api import (
     AccessToken,
     CreateAgentDispatchRequest,
@@ -89,19 +90,20 @@ class DispatchResponse(BaseModel):
 
 
 class HealthResponse(BaseModel):
-    status: str
-    redis: bool
-    livekit_configured: bool
+    status: str = "ok"
+    redis: bool = False
+    redis_diagnostic: Optional[dict] = None
+    livekit_configured: bool = False
     version: str = "0.1.0"
 
 
-# ── Health Endpoint ──────────────────────────────────────────────────────────
+# ?? Health Endpoint ??????????????????????????????????????????????????????????
 
 @app.get("/", response_model=HealthResponse)
 @app.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """Report server health and connectivity to external services (Redis, LiveKit)."""
-    redis_ok = await ping_redis()
+    redis_ok, redis_diag = await check_redis_health()
     livekit_ok = bool(
         settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret
     )
@@ -109,6 +111,7 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status="ok",
         redis=redis_ok,
+        redis_diagnostic=redis_diag,
         livekit_configured=livekit_ok,
     )
 

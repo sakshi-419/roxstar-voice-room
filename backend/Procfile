@@ -1,2 +1,2 @@
-﻿web: uv run python -m server.token_server
+web: uv run python -m server.token_server
 worker: uv run python -m server.main start

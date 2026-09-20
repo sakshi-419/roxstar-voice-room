@@ -1,4 +1,4 @@
-﻿# Roxstar AI Voice Room
+# Roxstar AI Voice Room
 
 An intelligent, real-time voice and text room featuring two AI co-hosts — **Roxstar AI Dost** and **Roxstar AI Sathi** — powered by LiveKit Cloud, Deepgram Nova-3 STT, Groq ultra-low-latency LLM inference, ElevenLabs neural Hindi TTS, and Upstash Redis.
 

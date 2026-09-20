@@ -1,4 +1,4 @@
-﻿import os
+import os
 from PIL import Image, ImageDraw, ImageFont
 
 os.makedirs(r"c:\AI-VOICE-ROOM-ROCK\roxstar-voice-room\docs", exist_ok=True)
