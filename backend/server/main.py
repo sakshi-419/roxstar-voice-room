@@ -75,16 +75,26 @@ from providers.stt import build_stt
 from providers.tts import build_tts
 
 def _sanitize_for_voice(text: str) -> str:
-    """Strip emoji and non-printable characters for TTS compatibility.
-    Keeps Roman Hinglish (ASCII), Devanagari, and common Latin extended chars."""
+    """Strip markdown formatting, emoji, and symbols for clean spoken voice output."""
     import re as _re
     if not text:
-        return text
-    # Remove emoji and symbols outside standard printable ranges
+        return ""
+    # Strip markdown bold / italics
+    text = _re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = _re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = _re.sub(r"__([^_]+)__", r"\1", text)
+    text = _re.sub(r"_([^_]+)_", r"\1", text)
+    # Strip markdown headers, lists, bullets
+    text = _re.sub(r"^[#>\-\*\+]\s+", "", text, flags=_re.MULTILINE)
+    # Strip code backticks
+    text = _re.sub(r"`+([^`]+)`+", r"\1", text)
+    # Strip markdown links
+    text = _re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
+    # Remove non-printable / emoji outside standard range
     cleaned = _re.sub(r"[^\x09\x0A\x0D\x20-\x7E\u00C0-\u024F\u0900-\u097F]", "", text)
     # Collapse multiple spaces
-    cleaned = _re.sub(r"  +", " ", cleaned).strip()
-    return cleaned or text  # fallback to original if cleaning wipes everything
+    cleaned = _re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or text
 
 
 configure_logging(settings.log_level)
@@ -123,6 +133,8 @@ async def dost_entrypoint(ctx: JobContext) -> None:
             llm=llm_provider,
             tts=tts_provider,
             allow_interruptions=True,
+            min_endpointing_delay=0.25,
+            max_endpointing_delay=0.8,
             conn_options=SessionConnectOptions(
                 max_unrecoverable_errors=100,
                 llm_conn_options=APIConnectOptions(
@@ -299,8 +311,7 @@ async def dost_entrypoint(ctx: JobContext) -> None:
                         if not target:
                             target = await BotRouter.select_bot(state, chat_text)
 
-                    sathi_in_room = any("sathi" in (p.name or "").lower() or "sathi" in (p.identity or "").lower() for p in ctx.room.remote_participants.values())
-                    should_respond = (target == "roxstar-dost") or (not sathi_in_room)
+                    should_respond = (target == "roxstar-dost")
                     if should_respond:
                         lock_ok = await state.acquire_speaking_lock("roxstar-dost", ttl=15)
                         if not lock_ok:
@@ -384,6 +395,8 @@ async def sathi_entrypoint(ctx: JobContext) -> None:
             llm=llm_provider,
             tts=tts_provider,
             allow_interruptions=True,
+            min_endpointing_delay=0.25,
+            max_endpointing_delay=0.8,
             conn_options=SessionConnectOptions(
                 max_unrecoverable_errors=100,
                 llm_conn_options=APIConnectOptions(
@@ -559,8 +572,7 @@ async def sathi_entrypoint(ctx: JobContext) -> None:
                         if not target:
                             target = await BotRouter.select_bot(state, chat_text)
 
-                    dost_in_room = any("dost" in (p.name or "").lower() or "dost" in (p.identity or "").lower() for p in ctx.room.remote_participants.values())
-                    should_respond = (target == "roxstar-sathi") or (not dost_in_room)
+                    should_respond = (target == "roxstar-sathi")
                     if should_respond:
                         lock_ok = await state.acquire_speaking_lock("roxstar-sathi", ttl=15)
                         if not lock_ok:

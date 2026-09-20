@@ -48,8 +48,8 @@ def build_llm(timeout: float = 15.0) -> llm.LLM:
         if not settings.groq_api_key:
             raise RuntimeError("GROQ_API_KEY is not configured in backend/.env.")
 
-        primary_model = settings.llm_model or "groq/compound-mini"
-        fallback_model = "allam-2-7b" if primary_model != "allam-2-7b" else "groq/compound-mini"
+        primary_model = settings.llm_model or "qwen/qwen3.8-27b"
+        fallback_model = "openai/gpt-oss-20b" if primary_model != "openai/gpt-oss-20b" else "allam-2-7b"
 
         # Primary Groq LLM (bounded tokens for ultra-fast voice responses and OTPM safety)
         try:

@@ -196,48 +196,11 @@ class BaseBotAgent(Agent):
             await self.state.release_speaking_lock(self.bot_name)
             raise StopResponse()
 
-        # 5. Exactly-Once Voice Ingestion & Routing
-        clean_snippet = re.sub(r"[^\w]", "", user_text.lower())[:16]
-        time_bucket = int(time.time() / 2.0) * 2
-        turn_id = f"{speaker_id}:{clean_snippet}:{time_bucket}"
-
-        is_winner = await self.state.claim_voice_ingest(turn_id)
-
-        if is_winner:
-            t_route_start = time.time()
-            target_bot = await BotRouter.select_bot(self.state, user_text)
-            routing_ms = (time.time() - t_route_start) * 1000.0
-
-            if target_bot == "STOP":
-                if hasattr(self, "session") and self.session:
-                    try:
-                        self.session.interrupt()
-                    except Exception:
-                        pass
-                await self.state.release_speaking_lock(self.bot_name)
-                await self.state.set_voice_route(turn_id, "STOP")
-                raise StopResponse()
-
-            await self.state.set_voice_route(turn_id, target_bot)
-            logger.info("BOT_ROUTED", selected_bot=target_bot, routing_ms=round(routing_ms, 2), room=self.state.room_name)
-
-            await self.state.register_speaker(speaker_id, speaker_name)
-            extracted_facts = extract_speaker_facts(user_text)
-            if extracted_facts:
-                await self.state.update_speaker_facts(speaker_id, extracted_facts)
-
-            turn = TurnRecord(
-                speaker_id=speaker_id,
-                speaker_name=speaker_name,
-                text=user_text,
-            )
-            await self.state.add_turn(turn)
-        else:
-            target_bot = await self.state.wait_for_voice_route(turn_id, timeout_seconds=0.6)
-            if not target_bot:
-                target_bot = await BotRouter.select_bot(self.state, user_text)
+        # 5. Distributed Bot Routing
+        target_bot = await BotRouter.select_bot(self.state, user_text)
 
         if target_bot == "STOP":
+            logger.info("INTERRUPT_STOP_COMMAND_EXECUTED", bot=self.bot_name, text=user_text)
             if hasattr(self, "session") and self.session:
                 try:
                     self.session.interrupt()
@@ -252,21 +215,31 @@ class BaseBotAgent(Agent):
                 "bot_turn_suppressed_by_router",
                 bot=self.bot_name,
                 target_bot=target_bot,
-                turn_id=turn_id,
             )
             raise StopResponse()
 
         # 7. Distributed Speaking Lock: Ensure exclusive speech generation
-        # Release any stale lock from previous turn, then acquire fresh lock
         await self.state.release_speaking_lock(self.bot_name)
-        lock_acquired = await self.state.acquire_speaking_lock(self.bot_name, ttl=20)
+        lock_acquired = await self.state.acquire_speaking_lock(self.bot_name, ttl=15)
         if not lock_acquired:
             logger.warning(
                 "bot_turn_suppressed_speaking_lock_busy",
                 bot=self.bot_name,
-                turn_id=turn_id,
             )
             raise StopResponse()
+
+        # Record speaker and turn history in room state
+        await self.state.register_speaker(speaker_id, speaker_name)
+        extracted_facts = extract_speaker_facts(user_text)
+        if extracted_facts:
+            await self.state.update_speaker_facts(speaker_id, extracted_facts)
+
+        turn = TurnRecord(
+            speaker_id=speaker_id,
+            speaker_name=speaker_name,
+            text=user_text,
+        )
+        await self.state.add_turn(turn)
         logger.info("TTS_START", bot=self.bot_name, room=self.state.room_name)
 
         # 8. Cap dialogue context to keep TTFB fast

@@ -63,7 +63,7 @@ def normalize_transcript(text: str) -> str:
 
 # STOP / Interruption regex covering Hindi, Hinglish, and English
 RE_STOP = re.compile(
-    r"\b(?:stop(?:\s+karo)?|bas(?:\s+karo)?|ruko|ruk\s*jao|ruk|chup(?:\s+karo)?|shant|wait|hold\s*on|ek\s*second|ek\s*sec)\b",
+    r"\b(?:stop|atop|bas|ruko|ruk\s*jao|ruk|chup|shant|wait|hold\s*on|ek\s*second|ek\s*sec)(?:\s+(?:karo|jao|ho\s*jao|raho|it|dost|sathi|yaar|bhai|ji|please))*\b",
     re.IGNORECASE,
 )
 

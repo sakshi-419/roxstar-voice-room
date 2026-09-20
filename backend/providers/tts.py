@@ -81,21 +81,21 @@ def build_tts(bot_name: str = "dost") -> tts.TTS:
         except Exception as exc:
             logger.error("elevenlabs_tts_init_failed", error=str(exc))
 
-    # Order providers: Deepgram as primary (ultra-fast, zero 401s), ElevenLabs as secondary
+    # If Deepgram is requested or ElevenLabs is not available, use Deepgram directly
     if pref_provider == "deepgram" or not el_tts:
         if dg_tts:
             providers.append(dg_tts)
             logger.info("tts_provider_registered", provider="deepgram", bot=bot_name, voice=dg_voice)
+        elif el_tts:
+            providers.append(el_tts)
+            logger.info("tts_provider_registered", provider="elevenlabs", bot=bot_name)
+    else:
         if el_tts:
             providers.append(el_tts)
-            logger.info("tts_fallback_registered", provider="elevenlabs", bot=bot_name)
-    else:
-        # If explicitly elevenlabs requested, try deepgram first if elevenlabs fails or test fallback
+            logger.info("tts_provider_registered", provider="elevenlabs", bot=bot_name)
         if dg_tts:
             providers.append(dg_tts)
-            logger.info("tts_provider_registered", provider="deepgram", bot=bot_name, voice=dg_voice)
-        if el_tts:
-            providers.append(el_tts)
+            logger.info("tts_fallback_registered", provider="deepgram", bot=bot_name, voice=dg_voice)
 
     # 3. Fallback: Google Cloud TTS hi-IN Neural2 (if explicit credentials file exists)
     google_creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
