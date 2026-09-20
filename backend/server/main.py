@@ -173,9 +173,14 @@ async def dost_entrypoint(ctx: JobContext) -> None:
         @session.on("user_input_transcribed")
         def on_user_input_transcribed(ev: UserInputTranscribedEvent) -> None:
             nonlocal stt_dur_ms
-            speaker_id = getattr(ev, "speaker_id", None)
-            if speaker_id and hasattr(agent, "set_last_speaker"):
-                agent.set_last_speaker(speaker_id)
+            speaker_id = getattr(ev, "speaker_id", None) or (getattr(ev.participant, "identity", None) if getattr(ev, "participant", None) else None)
+            if speaker_id:
+                sid_lower = str(speaker_id).lower()
+                if "dost" in sid_lower or "sathi" in sid_lower or "agent" in sid_lower or "roxstar" in sid_lower:
+                    logger.debug("stt_agent_audio_rejected", speaker_id=speaker_id, bot="roxstar-dost")
+                    return
+                if hasattr(agent, "set_last_speaker"):
+                    agent.set_last_speaker(speaker_id)
             if getattr(ev, "is_final", False) and getattr(ev, "transcript", ""):
                 if t_audio_recv > 0:
                     stt_dur_ms = (time.time() - t_audio_recv) * 1000.0
@@ -435,9 +440,14 @@ async def sathi_entrypoint(ctx: JobContext) -> None:
         @session.on("user_input_transcribed")
         def on_user_input_transcribed(ev: UserInputTranscribedEvent) -> None:
             nonlocal stt_dur_ms
-            speaker_id = getattr(ev, "speaker_id", None)
-            if speaker_id and hasattr(agent, "set_last_speaker"):
-                agent.set_last_speaker(speaker_id)
+            speaker_id = getattr(ev, "speaker_id", None) or (getattr(ev.participant, "identity", None) if getattr(ev, "participant", None) else None)
+            if speaker_id:
+                sid_lower = str(speaker_id).lower()
+                if "dost" in sid_lower or "sathi" in sid_lower or "agent" in sid_lower or "roxstar" in sid_lower:
+                    logger.debug("stt_agent_audio_rejected", speaker_id=speaker_id, bot="roxstar-sathi")
+                    return
+                if hasattr(agent, "set_last_speaker"):
+                    agent.set_last_speaker(speaker_id)
             if getattr(ev, "is_final", False) and getattr(ev, "transcript", ""):
                 if t_audio_recv > 0:
                     stt_dur_ms = (time.time() - t_audio_recv) * 1000.0

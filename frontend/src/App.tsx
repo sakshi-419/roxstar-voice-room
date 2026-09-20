@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+﻿import { useState, useEffect, useRef } from 'react'
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -120,10 +120,10 @@ export default function App() {
       {/* Header */}
       <header className="app-header">
         <div className="brand">
-          <div className="brand-logo">🎙️</div>
+          <div className="brand-logo">ðŸŽ™ï¸</div>
           <div>
             <h1 className="brand-title">Roxstar AI Voice Room</h1>
-            <div className="brand-subtitle">Phase 1: Real-Time LiveKit Connectivity</div>
+            <div className="brand-subtitle">Real-Time AI Voice Room</div>
           </div>
         </div>
 
@@ -210,12 +210,12 @@ export default function App() {
                 disabled={isConnecting}
                 id="join-room-btn"
               >
-                {isConnecting ? 'Connecting...' : 'Join Room ➔'}
+                {isConnecting ? 'Connecting...' : 'Join Room âž”'}
               </button>
 
               {errorMsg && (
                 <div className="error-banner">
-                  ⚠️ {errorMsg}
+                  âš ï¸ {errorMsg}
                 </div>
               )}
             </form>
@@ -232,6 +232,13 @@ export default function App() {
           connect={true}
           audio={true}
           video={false}
+          options={{
+            audioCaptureDefaults: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          }}
           onDisconnected={handleLeave}
         >
           <RoomView
@@ -335,6 +342,49 @@ function RoomView({
   })
   const allAgentsActive = hasDost && hasSathi
 
+  // Single mutually exclusive audio state (Requirement 18)
+  const isUserSpeaking = Boolean(localParticipant?.isSpeaking)
+  const dostSpeaking = participants.some((p) => {
+    const id = (p.identity || '').toLowerCase()
+    const nm = (p.name || '').toLowerCase()
+    return !p.isLocal && (id.includes('dost') || nm.includes('dost')) && p.isSpeaking
+  })
+  const sathiSpeaking = participants.some((p) => {
+    const id = (p.identity || '').toLowerCase()
+    const nm = (p.name || '').toLowerCase()
+    return !p.isLocal && (id.includes('sathi') || nm.includes('sathi')) && p.isSpeaking
+  })
+
+  let audioStateBadge = {
+    state: 'IDLE',
+    label: 'Ready / Silent (Speak to trigger AI)',
+    icon: 'âšª',
+    className: 'audio-state-idle',
+  }
+
+  if (isUserSpeaking) {
+    audioStateBadge = {
+      state: 'LISTENING',
+      label: 'Listening to your voice...',
+      icon: 'ðŸŸ¢',
+      className: 'audio-state-listening',
+    }
+  } else if (dostSpeaking && !sathiSpeaking) {
+    audioStateBadge = {
+      state: 'DOST SPEAKING',
+      label: 'Dost is speaking...',
+      icon: 'ðŸ”µ',
+      className: 'audio-state-dost',
+    }
+  } else if (sathiSpeaking) {
+    audioStateBadge = {
+      state: 'SATHI SPEAKING',
+      label: 'Sathi is speaking...',
+      icon: 'ðŸŸ£',
+      className: 'audio-state-sathi',
+    }
+  }
+
   const toggleMic = async () => {
     try {
       await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled)
@@ -385,6 +435,12 @@ function RoomView({
           <span className="user-tag">You: {participantName}</span>
         </div>
 
+      {/* Room Audio State Banner (Requirement 18) */}
+      <div className={`audio-status-banner ${audioStateBadge.className}`}>
+        <span className="audio-status-icon">{audioStateBadge.icon}</span>
+        <span className="audio-status-text"><strong>{audioStateBadge.state}:</strong> {audioStateBadge.label}</span>
+      </div>
+
         <div className="room-actions">
           <button
             type="button"
@@ -392,7 +448,7 @@ function RoomView({
             onClick={toggleMic}
             id="mic-toggle-btn"
           >
-            {isMicrophoneEnabled ? '🎙️ Mic ON' : '🔇 Mic Muted'}
+            {isMicrophoneEnabled ? 'ðŸŽ™ï¸ Mic ON' : 'ðŸ”‡ Mic Muted'}
           </button>
 
           <button
@@ -402,7 +458,7 @@ function RoomView({
             disabled={isDispatching || allAgentsActive}
             id="dispatch-btn"
           >
-            🤖 {allAgentsActive ? 'AI Agents Active' : (dispatchStatus || 'Summon AI Agents')}
+            ðŸ¤–Â {allAgentsActive ? 'AI Agents Connected' : (dispatchStatus || 'Summon AI Agents')}
           </button>
           <button
             type="button"
@@ -410,7 +466,7 @@ function RoomView({
             onClick={() => setShowChat(!showChat)}
             id="chat-toggle-btn"
           >
-            💬 Chat {chatMessages.length > 0 ? `(${chatMessages.length})` : ''}
+            ðŸ’¬ Chat {chatMessages.length > 0 ? `(${chatMessages.length})` : ''}
           </button>
 
           <button
@@ -419,7 +475,7 @@ function RoomView({
             onClick={handleDisconnect}
             id="leave-room-btn"
           >
-            Leave ✖
+            Leave âœ–
           </button>
         </div>
       </div>
@@ -428,10 +484,10 @@ function RoomView({
       <div className="participants-section">
         <div className="section-header">
           <h2 className="section-title">
-            Connected Participants ({participants.length})
+            CONNECTED PARTICIPANTS ({participants.length})
           </h2>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            Live Audio Stream Active
+            AI Agents Connected
           </span>
         </div>
 
@@ -446,15 +502,15 @@ function RoomView({
         </div>
 
         <div className="info-box">
-          🎙️ <strong>Two AI Co-Hosts Active:</strong> Say <strong>"Dost, ..."</strong> to talk to <strong>AI Dost (Male Voice)</strong> or <strong>"Sathi, ..."</strong> to talk to <strong>AI Sathi (Female Voice)</strong>. Follow-ups (e.g. <em>"thoda simple batao"</em>) will automatically continue with the current speaker!
+          ðŸŽ™ï¸ <strong>Two AI Co-Hosts Connected:</strong> Say <strong>"Dost..."</strong> to speak with Dost or <strong>"Sathi..."</strong> to speak with Sathi. AI agents remain silent until you speak. Follow-ups (e.g. <em>"thoda simple batao"</em>) will automatically continue with the current speaker!
         </div>
 
         {/* Live Room Text Chat (Requirement 2.3 & Scenarios 1-5) */}
         {showChat && (
           <div className="chat-container">
             <div className="chat-header">
-              <span className="chat-title">💬 Live Room Text Chat</span>
-              <span className="chat-subtitle">Ask questions via text or voice — AI Dost &amp; Sathi will respond!</span>
+              <span className="chat-title">ðŸ’¬ Live Room Text Chat</span>
+              <span className="chat-subtitle">Ask questions via text or voice â€” AI Dost &amp; Sathi will respond!</span>
             </div>
 
             <div className="quick-prompts">
@@ -525,7 +581,7 @@ function RoomView({
                 id="room-chat-input"
               />
               <button type="submit" className="chat-send-btn" disabled={!chatInput.trim() || isSending} id="room-chat-send-btn">
-                {isSending ? '...' : 'Send ➔'}
+                {isSending ? '...' : 'Send âž”'}
               </button>
             </form>
           </div>
@@ -565,15 +621,15 @@ function ParticipantTile({
   } else if (isDost) {
     avatarClass = 'avatar bot-dost'
     initial = 'D'
-    badgeLabel = 'AI Dost (Male Voice)'
+    badgeLabel = 'Dost â€” AI DOST (MALE VOICE)'
     badgeClass = 'participant-badge badge-ai'
-    subtitle = 'Male Co-Host · Say "Dost..." to speak'
+    subtitle = 'Male Co-Host Â· Say "Dost..." to speak'
   } else if (isSathi) {
     avatarClass = 'avatar bot-sathi'
     initial = 'S'
-    badgeLabel = 'AI Sathi (Female Voice)'
+    badgeLabel = 'Sathi â€” AI SATHI (FEMALE VOICE)'
     badgeClass = 'participant-badge badge-ai'
-    subtitle = 'Female Co-Host · Say "Sathi..." to speak'
+    subtitle = 'Female Co-Host Â· Say "Sathi..." to speak'
   } else if (isAgent) {
     avatarClass = 'avatar bot-dost'
     initial = 'A'
@@ -606,13 +662,13 @@ function ParticipantTile({
 
         <div className="participant-audio-indicator">
           {isMicEnabled ? (
-            <span className="audio-active">🎙️ Mic Active</span>
+            <span className="audio-active">ðŸŽ™ï¸ Mic Active</span>
           ) : (
-            <span className="audio-muted">🔇 Muted</span>
+            <span className="audio-muted">ðŸ”‡ Muted</span>
           )}
           {isSpeaking && (
             <span style={{ color: 'var(--accent-emerald)', marginLeft: '6px', fontWeight: 600 }}>
-              • Speaking
+              â€¢ Speaking
             </span>
           )}
         </div>
@@ -620,3 +676,4 @@ function ParticipantTile({
     </div>
   )
 }
+

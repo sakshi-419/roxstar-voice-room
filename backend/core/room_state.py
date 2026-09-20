@@ -379,14 +379,58 @@ class RoomState:
             logger.debug("redis_set_last_bot_fallback", bot=bot_name, error=str(exc))
 
     async def get_last_bot(self) -> str | None:
-        """Get last speaking bot."""
+        """Get last speaking bot. Fast memory lookup with Redis fallback."""
+        if self._last_bot:
+            return self._last_bot
         try:
             redis = await self._get_redis()
             if redis:
                 key = f"room:{self.room_name}:last_bot"
                 val = await redis.get(key)
                 if val:
-                    return val.decode() if isinstance(val, bytes) else str(val)
+                    bot = val.decode() if isinstance(val, bytes) else str(val)
+                    self._last_bot = bot
+                    return bot
         except Exception as exc:
             logger.debug("redis_get_last_bot_fallback", error=str(exc))
         return self._last_bot
+
+
+    async def acquire_persona_lock(self, persona: str, ttl: int = 60) -> bool:
+        """Atomically lock a persona for this room to prevent duplicate agent instances."""
+        try:
+            redis = await self._get_redis()
+            if redis:
+                key = f"room:{self.room_name}:active_persona:{persona}"
+                acquired = await redis.set(key, "1", nx=True, ex=ttl)
+                if acquired:
+                    return True
+                return False
+        except Exception as exc:
+            logger.debug("redis_acquire_persona_lock_fallback", persona=persona, error=str(exc))
+
+        async with self._lock:
+            now = time.time()
+            if not hasattr(self, "_persona_locks"):
+                self._persona_locks = {}
+            if persona in self._persona_locks and self._persona_locks[persona] > now:
+                return False
+            self._persona_locks[persona] = now + ttl
+            return True
+
+    async def release_persona_lock(self, persona: str) -> bool:
+        """Release the persona lock for this room."""
+        try:
+            redis = await self._get_redis()
+            if redis:
+                key = f"room:{self.room_name}:active_persona:{persona}"
+                await redis.delete(key)
+                return True
+        except Exception as exc:
+            logger.debug("redis_release_persona_lock_fallback", persona=persona, error=str(exc))
+
+        async with self._lock:
+            if hasattr(self, "_persona_locks") and persona in self._persona_locks:
+                del self._persona_locks[persona]
+                return True
+            return False

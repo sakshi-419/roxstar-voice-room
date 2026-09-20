@@ -110,11 +110,22 @@ DOST_AFFINITY_KEYWORDS = frozenset({
 class BotRouter:
     @classmethod
     def is_stop_command(cls, transcript: str) -> bool:
-        """Check if transcript is an explicit STOP/interruption command."""
+        """Check if transcript is an explicit STOP/interruption command.
+        Pure stops (e.g. 'ruko', 'stop karo', 'ek second', 'stop dost') return True.
+        Direct addresses to a bot (e.g. 'Dost, ek second', 'Dost, wait') return False so the addressed bot responds.
+        """
         if not transcript:
             return False
         norm = normalize_transcript(transcript)
-        return bool(RE_STOP.search(norm))
+        if not RE_STOP.search(norm):
+            return False
+        dost_m = _DOST_PATTERNS.search(norm)
+        sathi_m = _SATHI_PATTERNS.search(norm)
+        if dost_m and dost_m.start() == 0 and not re.search(r"\b(?:stop|atop|bas|ruko|chup|shant)\b", norm):
+            return False
+        if sathi_m and sathi_m.start() == 0 and not re.search(r"\b(?:stop|atop|bas|ruko|chup|shant)\b", norm):
+            return False
+        return True
 
     @classmethod
     async def select_bot(cls, state: RoomState, transcript: str) -> str:
